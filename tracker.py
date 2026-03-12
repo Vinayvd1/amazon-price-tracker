@@ -46,6 +46,9 @@ def scrape_price(url: str) -> tuple[str | None, str | None]:
                 f"?api_key={SCRAPER_API_KEY}"
                 f"&url={url}"
                 f"&country_code=in"
+                f"&device_type=desktop"
+                f"&keep_headers=true"
+                f"&premium=true"
             )
             print(f"  🌐  Using ScraperAPI...")
             response = requests.get(scraper_url, timeout=60)
