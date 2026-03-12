@@ -1,12 +1,12 @@
 [
   {
     "asin": "B0BX9RWG1C",
-    "url": "https://www.amazon.com/dp/B0EXAMPLE1",
+    "url": "https://www.amazon.in/dp/B0EXAMPLE1",
     "target_price": 499.99,
     "alert_on_drop_percent": 5
   },
   {
-    "asin": "B0EXAMPLE2",
+    "asin": "B09PHNJYJV",
     "url": "https://www.amazon.in/dp/B0EXAMPLE2",
     "target_price": 1999,
     "alert_on_drop_percent": 10
