@@ -3,6 +3,7 @@ import json
 import csv
 import random
 import time
+import re
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -11,6 +12,7 @@ from pathlib import Path
 # ─── Config ────────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID")
+SCRAPER_API_KEY    = os.environ.get("SCRAPER_API_KEY")
 PRODUCTS_FILE      = "products.json"
 HISTORY_FILE       = "data/price_history.csv"
 
@@ -36,46 +38,69 @@ def get_headers():
 def scrape_price(url: str) -> tuple[str | None, str | None]:
     """Returns (price_float, product_title) or (None, None) on failure."""
     try:
-        time.sleep(random.uniform(2, 5))  # polite delay + randomness
-        response = requests.get(url, headers=get_headers(), timeout=15)
-        response.raise_for_status()
+        time.sleep(random.uniform(1, 3))
+
+        if SCRAPER_API_KEY:
+            scraper_url = (
+                f"http://api.scraperapi.com"
+                f"?api_key={SCRAPER_API_KEY}"
+                f"&url={url}"
+                f"&country_code=in"
+            )
+            print(f"  🌐  Using ScraperAPI...")
+            response = requests.get(scraper_url, timeout=60)
+        else:
+            print(f"  ⚠️  No SCRAPER_API_KEY — trying direct request (may get blocked)")
+            response = requests.get(url, headers=get_headers(), timeout=15)
+
+        print(f"  📡  Status code: {response.status_code}")
+
+        if response.status_code != 200:
+            print(f"  ❌  Bad response: {response.status_code}")
+            return None, None
+
+        if "captcha" in response.text.lower() or "robot" in response.text.lower():
+            print(f"  ❌  Amazon returned a CAPTCHA — blocked!")
+            return None, None
 
         soup = BeautifulSoup(response.content, "html.parser")
 
-        # Product title
         title_tag = soup.find(id="productTitle")
         title = title_tag.get_text(strip=True) if title_tag else "Unknown Product"
+        print(f"  📦  Title: {title[:60]}")
 
-        # Price — Amazon has several possible price locations
         price = None
         price_selectors = [
             {"id": "priceblock_ourprice"},
             {"id": "priceblock_dealprice"},
-            {"class": "a-price-whole"},
             {"id": "price_inside_buybox"},
+            {"class": "a-price-whole"},
             {"class": "priceToPay"},
+            {"id": "corePrice_feature_div"},
         ]
 
         for selector in price_selectors:
             tag = soup.find(attrs=selector)
             if tag:
-                raw = tag.get_text(strip=True).replace(",", "").replace("₹", "").replace("$", "").replace("£", "").replace("€", "")
-                # grab first number-like string
-                import re
-                match = re.search(r"[\d]+\.?\d*", raw)
+                raw = tag.get_text(strip=True)
+                cleaned = raw.replace(",", "").replace("₹", "").replace("$", "").replace("£", "").replace("€", "")
+                match = re.search(r"\d+\.?\d*", cleaned)
                 if match:
                     price = float(match.group())
+                    print(f"  💰  Price: {price}")
                     break
+
+        if price is None:
+            print(f"  ❌  Could not find price — Amazon may have changed their HTML")
 
         return price, title
 
     except Exception as e:
-        print(f"  ⚠️  Scrape error for {url}: {e}")
+        print(f"  ❌  Scrape error: {e}")
         return None, None
 
 # ─── History ────────────────────────────────────────────────────────────────────
 def load_history() -> dict:
-    """Returns {asin: [{"date":..,"price":..}, ...]}"""
     history = {}
     path = Path(HISTORY_FILE)
     if not path.exists():
@@ -118,7 +143,7 @@ def send_telegram(message: str):
     except Exception as e:
         print(f"  ⚠️  Telegram error: {e}")
 
-def format_alert(title: str, url: str, old_price: float, new_price: float, target: float) -> str:
+def format_alert(title, url, old_price, new_price, target):
     drop_pct = round((old_price - new_price) / old_price * 100, 1)
     return (
         f"🚨 <b>Price Drop Alert!</b>\n\n"
@@ -129,7 +154,7 @@ def format_alert(title: str, url: str, old_price: float, new_price: float, targe
         f"🔗 <a href='{url}'>View on Amazon</a>"
     )
 
-def format_target_hit(title: str, url: str, price: float, target: float) -> str:
+def format_target_hit(title, url, price, target):
     return (
         f"🎯 <b>Target Price Reached!</b>\n\n"
         f"📦 <b>{title[:80]}</b>\n\n"
@@ -138,15 +163,26 @@ def format_target_hit(title: str, url: str, price: float, target: float) -> str:
         f"🔗 <a href='{url}'>Buy Now on Amazon</a>"
     )
 
+def send_startup_message():
+    msg = (
+        "✅ <b>Amazon Price Tracker is running!</b>\n\n"
+        "Your tracker is set up correctly and will check prices every 6 hours.\n"
+        "You'll get alerts here when prices drop or hit your target. 🎉"
+    )
+    send_telegram(msg)
+
 # ─── Main ───────────────────────────────────────────────────────────────────────
 def main():
     print(f"\n{'='*55}")
     print(f"  Amazon Price Tracker  —  {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC")
     print(f"{'='*55}\n")
 
-    # Load products list
+    print(f"🔑  ScraperAPI key: {'Yes ✅' if SCRAPER_API_KEY else 'No ❌'}")
+    print(f"🔑  Telegram token: {'Yes ✅' if TELEGRAM_BOT_TOKEN else 'No ❌'}")
+    print(f"🔑  Telegram chat ID: {'Yes ✅' if TELEGRAM_CHAT_ID else 'No ❌'}\n")
+
     if not Path(PRODUCTS_FILE).exists():
-        print(f"❌  {PRODUCTS_FILE} not found. Add products first.")
+        print(f"❌  {PRODUCTS_FILE} not found.")
         return
 
     with open(PRODUCTS_FILE) as f:
@@ -157,46 +193,41 @@ def main():
         return
 
     history = load_history()
+    first_run = not Path(HISTORY_FILE).exists()
 
     for product in products:
         asin       = product["asin"]
         url        = product["url"]
         target     = float(product.get("target_price", 0))
-        alert_drop = float(product.get("alert_on_drop_percent", 5))  # alert if drops X%
+        alert_drop = float(product.get("alert_on_drop_percent", 5))
 
-        print(f"🔍  Checking: {asin}")
+        print(f"🔍  Checking ASIN: {asin}")
         price, title = scrape_price(url)
 
         if price is None:
             print(f"  ❌  Could not fetch price for {asin}\n")
             continue
 
-        print(f"  📦  {title[:60]}")
-        print(f"  💰  Current price: {price}")
-
         past = history.get(asin, [])
         last_price = past[-1]["price"] if past else None
 
-        # Save to history
         save_price(asin, title, price)
 
-        # ── Check 1: target price reached ──────────────────────────────
         if target > 0 and price <= target:
-            print(f"  🎯  TARGET REACHED! {price} ≤ {target}")
-            msg = format_target_hit(title, url, price, target)
-            send_telegram(msg)
-
-        # ── Check 2: significant price drop ────────────────────────────
+            print(f"  🎯  TARGET REACHED! {price} <= {target}")
+            send_telegram(format_target_hit(title, url, price, target))
         elif last_price and price < last_price:
             drop_pct = (last_price - price) / last_price * 100
-            print(f"  📉  Price dropped {drop_pct:.1f}% from {last_price} → {price}")
+            print(f"  📉  Price dropped {drop_pct:.1f}% ({last_price} -> {price})")
             if drop_pct >= alert_drop:
-                msg = format_alert(title, url, last_price, price, target)
-                send_telegram(msg)
+                send_telegram(format_alert(title, url, last_price, price, target))
         else:
-            print(f"  ✅  No significant change (last: {last_price})")
+            print(f"  ✅  No change (last: {last_price}, now: {price})")
 
         print()
+
+    if first_run:
+        send_startup_message()
 
     print("✅  All products checked.\n")
 
