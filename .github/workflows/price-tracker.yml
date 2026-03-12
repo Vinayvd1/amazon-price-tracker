@@ -43,6 +43,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          SCRAPER_API_KEY:    ${{ secrets.SCRAPER_API_KEY }}
         run: python tracker.py
 
       # ── 5. Commit updated price history back to repo ─────────────────
